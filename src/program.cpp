@@ -1,6 +1,49 @@
-#include <system.xml/system.xml.h>
-#include <system.io/system.io.file.h>
+#include "clara.hpp"
+#include <algorithm>
+#include <cctype>
 #include <iostream>
+#include <locale>
+#include <system.io/system.io.file.h>
+#include <system.xml/system.xml.h>
+
+// trim from start (in place)
+static inline void ltrim(std::string &s)
+{
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](int ch) {
+                return !std::isspace(ch);
+            }));
+}
+
+// trim from end (in place)
+static inline void rtrim(std::string &s)
+{
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](int ch) {
+                return !std::isspace(ch);
+            })
+                .base(),
+            s.end());
+}
+
+// trim from both ends (in place)
+static inline void trim(std::string &s)
+{
+    ltrim(s);
+    rtrim(s);
+}
+
+// trim from start (copying)
+static inline std::string ltrim_copy(std::string s)
+{
+    ltrim(s);
+    return s;
+}
+
+// trim from end (copying)
+static inline std::string rtrim_copy(std::string s)
+{
+    rtrim(s);
+    return s;
+}
 
 int descendantsDepths(System::Xml::XmlNode *node)
 {
@@ -23,6 +66,21 @@ int descendantsDepths(System::Xml::XmlNode *node)
     return depth;
 }
 
+bool isOneliner(System::Xml::XmlNode *node)
+{
+    if (descendantsDepths(node) > 1) return false;
+
+    for (auto child : node->ChildNodes())
+    {
+        if (child->NodeType() != System::Xml::XmlNodeType::Text)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void printNode(System::Xml::XmlNode *node, int depth, std::ostream &s)
 {
     if (node == nullptr)
@@ -32,12 +90,16 @@ void printNode(System::Xml::XmlNode *node, int depth, std::ostream &s)
 
     if (node->LocalName()[0] != '#')
     {
+        bool oneliner = isOneliner(node);
+
         for (int i = 0; i < depth; i++)
         {
             s << "  ";
         }
+
         s << "<" << node->LocalName() << ">";
-        if (descendantsDepths(node) > 1)
+
+        if (!oneliner)
         {
             s << "\n";
         }
@@ -46,14 +108,15 @@ void printNode(System::Xml::XmlNode *node, int depth, std::ostream &s)
         {
             printNode(child, depth + 1, s);
         }
-        if (descendantsDepths(node) != 0)
+
+        if (!oneliner)
         {
             for (int i = 0; i < depth; i++)
             {
                 s << "  ";
             }
         }
-        s << "</" << node->LocalName() << ">";
+        s << "</" << node->LocalName() << ">\n";
     }
     else if (node->LocalName() == "#cdata")
     {
@@ -61,30 +124,43 @@ void printNode(System::Xml::XmlNode *node, int depth, std::ostream &s)
     }
     else
     {
-        s << node->InnerText();
+        s << ltrim_copy(rtrim_copy(node->InnerText()));
     }
 }
 
 int main(int argc, char *argv[])
 {
-    if (argc <= 1)
+    std::string input;
+    bool showHelp = false;
+
+    auto cli = clara::Arg(input, "input")("input file name") |
+               clara::Help(showHelp);
+
+    auto result = cli.parse(clara::Args(argc, argv));
+    if (!result)
     {
-        std::cerr << "No parameters given\n";
+        std::cerr << "Error in command line: " << result.errorMessage() << std::endl;
+
+        cli.writeToStream(std::cout);
+
+        return 1;
+    }
+
+    if (showHelp)
+    {
+        cli.writeToStream(std::cout);
+
         return 0;
     }
 
-    std::string input = argv[1];
     System::Xml::XmlDocument doc;
 
-    std::cout << input << "\n\n";
     if (System::IO::File::Exists(input))
     {
-        std::cout << "loading from file";
         doc.Load(input);
     }
     else
     {
-        std::cout << "loading from xml data";
         doc.LoadXml(input);
     }
 
